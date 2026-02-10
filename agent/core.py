@@ -1,72 +1,112 @@
-import os
-from logging import getLogger
-from dotenv import load_dotenv, find_dotenv
 import pandas as pd
-from dataclasses import dataclass
-from typing import Union, Dict, Any
-load_dotenv(find_dotenv())
-logger = getLogger("CFO-PIPELINE")
+from document_helpers.utils import load_data
+import os
+from dotenv import load_dotenv,find_dotenv
 
-@dataclass
-class Message:
-    role: str
-    content: str
-    
-@dataclass
-class UserInfo:
-    user_id: str
-    preferences: Union[Dict[str, Any], str]
-def read_text_file(file_path: str):
-    """Reads the content of a text file and returns it as a string.
+load_data(find_dotenv())
 
-    Args:
-        file_path (str): The path to the text file.
-    """
-    logger.info(f"Attempting to read file from {file_path}")
+class FinanceTools:
     
-    if os.path.isabs(file_path):
-        absolute_file_path= os.path.normpath(file_path)
-    else:
-        script_dir= os.path.dirname(os.path.abspath(__file__))
-        absolute_file_path= os.path.normpath(os.path.join(script_dir,file_path))
-    
-    if not os.path.exists(absolute_file_path):
-        logger.error(f"File not found: {absolute_file_path}")
-        raise FileNotFoundError(f"The file at {absolute_file_path} does not exist")
-    try:
-        with open(absolute_file_path, 'r', encoding="utf-8") as file:
-            content = file.read()
-            logger.info(f"Successfully read file contents at {absolute_file_path}")
-            return content
-    except Exception as exception:
-        logger.error(f"Error reading file at {absolute_file_path}: {exception}")
-        raise FileNotFoundError(f"{exception}") 
-    
-def load_financial_data():
-    """_summary_
-    Loads financial dataset into the LLM 
-    Args: None
-    Returns: Dict of sheet_name and Dataframe pairing
-    """
-    try:
-        file_path= os.getenv("FINANCIAL_DATASET_PATH")
-        financial_dataset= pd.ExcelFile(file_path)
-        sheets = {}
-        for sheet_name in financial_dataset.sheet_names:
-            df = pd.read_excel(financial_dataset, sheet_name= sheet_name)
-            sheets[sheet_name.lower()] = df
+    def __init__(self,data):
+        data = load_data(os.getenv("FINANCIAL_DATASET_PATH"))
+        self.actuals = data["actuals"]
+        self.budget = data["budget"]
+        self.cash = data["cash"]
+        self.fx = data["fx"]
         
-        required = {"actuals","budget","cash","fx"}
-        missing = required - set(sheets.keys())
-        if missing:
-            raise KeyError(f"Missing sheets: {missing}")
-        logger.info(f"Loaded sheets: {list(sheets.keys())}")
-        return sheets
-    except Exception as exception:
-        logger.error(f"Loading financial dataset failed: \n {exception}")
-        raise
+    
+    def fx_currency_conversion(self, amount: float, currency: str, month: str):
+        
+        if currency.upper() == "USD":
+            return round(amount, 2)
+        
+        month = str(month).strip()
+        currency = currency.upper().strip()
+        
+        required_columns = {"month","currency","rate_to_usd"}
+        for sheet_name, df in [("fx", self.fx)]:
+            if not required_columns.issubset(df.columns):
+                raise ValueError(f"{sheet_name} is missing required column {required_columns - set(df.columns)}")
+        fx_row = (
+            self.fx.assign(
+                month = lambda x: x["month"].str.lower().str.strip(),
+                currency = lambda x: x["currency"].str.lower().str.strip(),
+                rate_to_usd = lambda x: x["rate_to_usd"].str.lower().str.strip()
+            )
+            .query(
+                "month == @month and currency == @currency"
+            )
+        )
+        
+        if fx_row.empty:
+            raise ValueError(f"No FX rate found for {currency} in {month}")
+        
+        current_rate = fx_row.iloc[0]["rate_to_usd"]
+        if current_rate <= 0:
+            raise ValueError(f"current rate for {currency} is invalid")
+        
+        return round(amount * current_rate, 2)
+            
+            
+    def revenue_vs_budget(self, month: str, entity: str):
+        """
+        Compare actual vs budget for a given month and entity
+        Args:
+            month (str): The month associated with the given enity
+            entity (str): Account entity in question for the fiscal period
+        Returns:
+            Returns a dictionary breakdown of the financials of the fiscal period
+        """
+        month = str(month).strip()
+        entity = entity.strip().lower()
+        
+        #Validating required columns exist
+        required_columns = {"month","entity","account_category","amount","currency"}
+        for sheet_name, df in [("actuals", self.actuals), ("budget", self.budget)]:
+            if not required_columns.issubset(df.columns):
+                raise ValueError(f"{sheet_name} is missing required column {required_columns - set(df.columns)}")
+        actual = (
+            self.actuals.assign(
+                entity = lambda x: x["entity"].str.lower().str.strip(),
+                account_category = lambda x: x["account_category"].str.lower().str.strip(),
+                month = lambda x: x["month"].str.lower().str.strip(),
+                currency = lambda x: x["currency"].str.lower().str.strip()
+            )
+            .query(
+                "month == @month and entity == @entity and account_category == 'revenue'"
+            )["amount"].sum()
+        )
+        
+        budget = (
+            self.budget.assign(
+                entity = lambda x: x["entity"].str.lower().str.strip(),
+                account_category = lambda x: x["account_category"].str.lower().str.strip(),
+                month = lambda x: x["month"].str.lower().str.strip(),
+                currency = lambda x: x["currency"].str.lower().str.strip()
+            )
+            .query(
+                "month == @month and entity == @entity and account_category == 'revenue'"
+            )["amount"].sum()
+        )
+        
+        variance = actual - budget
+        variance_percentage = (variance / budget * 100) if budget != 0 else None
+        
+        return {
+            "month" : month,
+            "entity": entity,
+            "actual_revenue_usd" : round(actual, 2),
+            "budgeted_revenue_usd": round(budget, 2),
+            "variance_usd": round(variance, 2),
+            "variance_percentage": round(variance_percentage, 2) if variance_percentage is not None else None
+        }
+        
+        
+        
+        
+        
+            
     
     
-    
-    
+
     

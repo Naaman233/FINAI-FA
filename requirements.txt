@@ -1,0 +1,18 @@
+streamlit
+pandas
+plotly
+python-dateutil
+transformers
+torch      # for Hugging Face models
+pytest
+openai
+openpyxl   # for Excel file reading
+accelerate
+python-dotenv>=1.0.0
+huggingface_hub
+duckdb  
+duckdb-engine
+smolagents
+sqlalchemy
+
+

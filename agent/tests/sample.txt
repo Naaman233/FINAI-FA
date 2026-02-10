@@ -1,0 +1,76 @@
+import pytest
+from pathlib import Path
+import json 
+from datetime import datetime
+from dotenv import load_dotenv, find_dotenv
+import os
+import pandas as pd
+from unittest.mock import patch
+from agent.assistant import detect_intent
+load_dotenv(find_dotenv())
+from utils.utils import read_text_file, load_financial_sheets
+def _fixtures_path():
+    return Path(__file__).parent.parent.joinpath("fixtures","data.xlsx").as_posix()
+
+    """_summary_
+    def test_executor(monkeypatch):
+    monkeypatch.setattr("agent.core.run_financial_cfo_copilot_pipeline", lambda messages: '{"response":"stubbed"}')
+    
+    user_info = UserInfo(user_id="test", preferences={"currency":"USD"})
+    message = [Message(role="user", content="What was June 2025 revenue vs Budget in 2025")]
+    
+    financial_data_path = os.getenv("FINANCIAL_DATASET_PATH")
+    
+    response = executor(user_info, message, financial_data_path)
+    assert isinstance(response, str)
+    parsed = json.loads(response)
+    assert parsed.get("response") == "stubbed"
+    """
+
+    
+    
+def test_read_text_file(tmp_path):
+    test_file= tmp_path/"sample.txt"
+    test_file.write_text("Hello CFO Assistant")
+    content = read_text_file(str(test_file))
+    assert content == "Hello CFO Assistant"
+    
+def test_load_financial_data(tmp_path):
+    test_file = tmp_path / "test_data.xlsx"
+    with pd.ExcelWriter(test_file) as writer:
+        pd.DataFrame({"month": ["Jan"], "revenue": [100]}).to_excel(writer, sheet_name="Actuals", index=False)
+        pd.DataFrame({"month": ["Jan"], "revenue": [120]}).to_excel(writer, sheet_name="Budget", index=False)
+        pd.DataFrame({"month": ["Jan"], "cash_usd": [5000]}).to_excel(writer, sheet_name="Cash", index=False)
+        pd.DataFrame({"currency": ["USD"], "rate_to_usd": [1.0]}).to_excel(writer, sheet_name="Fx", index=False)
+        
+    test_data = load_financial_sheets(str(test_file))  # convert Path to str
+    assert set(test_data.keys()) == {"actuals", "budget", "cash", "fx"}
+    
+@pytest.mark.parametrize("message,expected_label", [
+    ("What was June 2025 revenue vs budget in USD?", "get_revenue_vs_budget"),
+    ("Show Gross Margin % trend for the last 3 months.", "get_gross_margin_trend"),
+    ("Break down Opex by category for June.", "get_opex_breakdown"),
+    ("What is our cash runway right now?", "get_cash_runway"),
+    ("Calculate EBITDA from the data.", "get_ebitda_proxy"),
+])
+@patch("agent.assistant.client.text_classification")
+def test_detect_intent(mock_classification, message, expected_label):
+    """
+    Test detect_intent correctly maps financial questions to intents
+    using mocked Hugging Face inference results.
+    """
+    # Mock Hugging Face response
+    mock_classification.return_value = [{
+        "labels": [expected_label, "other_intent"],
+        "scores": [0.95, 0.05]
+    }]
+
+    # Run intent detection
+    intent, confidence = detect_intent(message)
+
+    # Assertions
+    assert intent == expected_label
+    assert 0.0 <= confidence <= 1.0
+    assert confidence > 0.5  # Confidence threshold
+    mock_classification.assert_called_once()
+    
