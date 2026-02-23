@@ -1,42 +1,51 @@
 import pandas as pd
-from dotenv import load_dotenv, find_dotenv
 import os
-import time
-from dataclasses import dataclass
+from dotenv import load_dotenv, find_dotenv
+from langchain_community.document_loaders import UnstructuredExcelLoader
+from dataclasses import dataclass, asdict
+from datetime import datetime
+import json
 
 load_dotenv(find_dotenv())
 
 @dataclass
-class DocumentLoaderException(Exception):
-    timestamp: float
+class UtilClassException(Exception):
     message: str
+    timestamp: datetime
     
-    def __str__(self):
-        return f"[{self.timestamp}] DocumentLoaderException: {self.message}"
     
-def load_data(path: str):
-    data_path = path or os.environ.get("FINANCIAL_DATASET_PATH")
-    if not data_path:
-        raise ValueError("No data source path provided")
-    if not os.path.exists(data_path):
-        raise FileNotFoundError(f"{data_path} does not exist")
+    def __post_init__(self):
+        super().__init__(self.message)
     
-    try:
-        return {
-            "actuals": pd.read_excel(data_path, sheet_name="actuals"),
-            "buddet": pd.read_excel(data_path, sheet_name="budget"),
-            "cash" : pd.read_excel(data_path, sheet_name="cash"),
-            "fx": pd.read_excel(data_path, sheet_name="fx")
-        }
-    except Exception as exception:
-        raise DocumentLoaderException(
-            timestamp=time.time(),
-            message=str(exception)
+    def __log__format(self):
+        return f"Error occured at {self.timestamp.isoformat()}\n{self.message}"
+    
+    def __to_json__(self):
+        data = asdict(self)
+        data["timestamp"] = self.timestamp.isoformat()
+        return json.dump(data)
+        
+    
+
+def load_excel_sheet(file):
+    if not os.path.exists(file):
+        raise UtilClassException(
+            "Path to file does not exist",
+            datetime.now()
         )
         
-
+    try:
+        file_loader = UnstructuredExcelLoader(file, mode="elements")
+        document = file_loader.load()
+        return document
+    except Exception as e:
+        raise UtilClassException(
+            f"Error loading excel file: {str(e)}",
+            datetime.now()
+        )
     
+    
+  
     
         
-
-    
+        
