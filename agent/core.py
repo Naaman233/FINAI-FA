@@ -1,112 +1,64 @@
 import pandas as pd
-from document_helpers.utils import load_data
+from langchain_community.docstore.document import Document
+from langchain_community.embeddings import HuggingFaceEmbeddings
+from langchain_community.document_loaders import UnstructuredExcelLoader
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain_community.vectorstores import FAISS
+from typing import List
+from dotenv import find_dotenv, load_dotenv
+from dataclasses import dataclass, asdict
+from datetime import datetime
+import json
 import os
-from dotenv import load_dotenv,find_dotenv
 
-load_data(find_dotenv())
+@dataclass
+class CoreClassException(Exception):
+    message: str
+    timestamp: datetime
+    
+    def __post_init__(self):
+        super().__init__(self.message)
+        
+    def __log__format(self):
+        return f"Error occured at {self.timestamp.isoformat()} \n {self.message}"
+    
+    def __to_json__(self):
+        data = asdict(self)
+        data["timestamp"] = self.timestamp.isoformat()
+        return json.dump(data)
 
-class FinanceTools:
-    
-    def __init__(self,data):
-        data = load_data(os.getenv("FINANCIAL_DATASET_PATH"))
-        self.actuals = data["actuals"]
-        self.budget = data["budget"]
-        self.cash = data["cash"]
-        self.fx = data["fx"]
-        
-    
-    def fx_currency_conversion(self, amount: float, currency: str, month: str):
-        
-        if currency.upper() == "USD":
-            return round(amount, 2)
-        
-        month = str(month).strip()
-        currency = currency.upper().strip()
-        
-        required_columns = {"month","currency","rate_to_usd"}
-        for sheet_name, df in [("fx", self.fx)]:
-            if not required_columns.issubset(df.columns):
-                raise ValueError(f"{sheet_name} is missing required column {required_columns - set(df.columns)}")
-        fx_row = (
-            self.fx.assign(
-                month = lambda x: x["month"].str.lower().str.strip(),
-                currency = lambda x: x["currency"].str.lower().str.strip(),
-                rate_to_usd = lambda x: x["rate_to_usd"].str.lower().str.strip()
-            )
-            .query(
-                "month == @month and currency == @currency"
-            )
+def create_document_from_spreadsheet(file):
+    if not os.path.exists(file):
+        raise CoreClassException(
+            "Path to file does not exist",
+            datetime.now()
         )
-        
-        if fx_row.empty:
-            raise ValueError(f"No FX rate found for {currency} in {month}")
-        
-        current_rate = fx_row.iloc[0]["rate_to_usd"]
-        if current_rate <= 0:
-            raise ValueError(f"current rate for {currency} is invalid")
-        
-        return round(amount * current_rate, 2)
-            
-            
-    def revenue_vs_budget(self, month: str, entity: str):
-        """
-        Compare actual vs budget for a given month and entity
-        Args:
-            month (str): The month associated with the given enity
-            entity (str): Account entity in question for the fiscal period
-        Returns:
-            Returns a dictionary breakdown of the financials of the fiscal period
-        """
-        month = str(month).strip()
-        entity = entity.strip().lower()
-        
-        #Validating required columns exist
-        required_columns = {"month","entity","account_category","amount","currency"}
-        for sheet_name, df in [("actuals", self.actuals), ("budget", self.budget)]:
-            if not required_columns.issubset(df.columns):
-                raise ValueError(f"{sheet_name} is missing required column {required_columns - set(df.columns)}")
-        actual = (
-            self.actuals.assign(
-                entity = lambda x: x["entity"].str.lower().str.strip(),
-                account_category = lambda x: x["account_category"].str.lower().str.strip(),
-                month = lambda x: x["month"].str.lower().str.strip(),
-                currency = lambda x: x["currency"].str.lower().str.strip()
-            )
-            .query(
-                "month == @month and entity == @entity and account_category == 'revenue'"
-            )["amount"].sum()
+    try:
+        file_loader = UnstructuredExcelLoader(file, mode="elements")
+        document = file_loader.load()
+        return document
+    except Exception as e:
+        raise CoreClassException(
+            f"Error loading excel file: {str(e)}",
+            datetime.now()
         )
-        
-        budget = (
-            self.budget.assign(
-                entity = lambda x: x["entity"].str.lower().str.strip(),
-                account_category = lambda x: x["account_category"].str.lower().str.strip(),
-                month = lambda x: x["month"].str.lower().str.strip(),
-                currency = lambda x: x["currency"].str.lower().str.strip()
-            )
-            .query(
-                "month == @month and entity == @entity and account_category == 'revenue'"
-            )["amount"].sum()
-        )
-        
-        variance = actual - budget
-        variance_percentage = (variance / budget * 100) if budget != 0 else None
-        
-        return {
-            "month" : month,
-            "entity": entity,
-            "actual_revenue_usd" : round(actual, 2),
-            "budgeted_revenue_usd": round(budget, 2),
-            "variance_usd": round(variance, 2),
-            "variance_percentage": round(variance_percentage, 2) if variance_percentage is not None else None
-        }
-        
-        
-        
-        
-        
-            
-    
-    
 
+def create_vectorstore(documents: List[Document]):
+    try:
+        text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
+        texts = text_splitter.split_documents(documents)
+        embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
+        vectorstore = FAISS.from_documents(texts, embeddings)
+        return vectorstore
+    except Exception as e:
+        raise CoreClassException(
+            f"Error creating vectorstore: {str(e)}",
+            datetime.now()
+        )
+    
+    
+    
+    
+                
+    
     
